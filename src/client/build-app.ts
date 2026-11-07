@@ -10,13 +10,13 @@ export const registerRoutes: FastifyPluginAsync = async (app) => {
   };
 
 
-export const buildApp = (): FastifyInstance => {
+export const buildApp = (prefix: string): FastifyInstance => {
     const app = Fastify({
         logger: true,
     });
 
     app.register(registerRoutes, {
-        prefix: "/api/v1",
+        prefix,
     });
 
     return app;

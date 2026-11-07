@@ -127,7 +127,14 @@ A aplicação deve continuar previsível se o modelo, uma tool ou a API mock fal
 
 Configuração sensível ou dependente de ambiente vai para variáveis de ambiente. Validar o que for obrigatório na inicialização. Manter `.env.example` sem segredos. Nunca versionar `.env` com credenciais.
 
-Variáveis esperadas: `GOOGLE_API_KEY`, `GEMINI_MODEL`, `PORT`, `CLIENT_API_BASE_URL`.
+Variáveis de ambiente:
+
+| Variável | Obrigatoriedade | Para que serve |
+|---|---|---|
+| `GOOGLE_API_KEY` | Obrigatória para o agente | Chave da API Gemini. Não vai no código-fonte. O agente só confere na primeira mensagem e falha se estiver vazia. A API mock não usa. |
+| `GEMINI_MODEL` | Obrigatória para o agente | Id do modelo da família Gemini Flash, sem o prefixo `google:`. O agente chama `google:${GEMINI_MODEL}`. Exemplo: `gemini-3.5-flash`. O id precisa existir na documentação atual e responder de fato. |
+| `CLIENT_API_BASE_URL` | Obrigatória | URL base da API mock, com protocolo, host, porta e prefixo. Exemplo: `http://127.0.0.1:5050/api/v1`. O mock escuta na porta e registra as rotas no caminho dessa URL. O agente usa a mesma URL para consultar produtos e pedidos. |
+| `APP_PORT` | Opcional | Porta HTTP do agente, onde fica o `POST /chat`. Se estiver ausente ou não for um número, o servidor usa `3000`. |
 
 ## Idioma do código
 
