@@ -1,0 +1,152 @@
+---
+description: Regras arquiteturais, técnicas e padrões de desenvolvimento do projeto.
+alwaysApply: true
+---
+
+# Agente conversacional de loja virtual
+
+O agente conversa com o usuário e consulta uma API mock de e-commerce para listar produtos, ver pedidos e criar compras.
+
+Três componentes, com responsabilidades separadas:
+
+1. **Agente de IA** — interpreta mensagens, escolhe ferramentas e formula respostas.
+2. **API mock** — simula os endpoints e as regras de negócio do cliente.
+3. **Interface** — conversa simples com o agente.
+
+O projeto deve demonstrar integração com LLM, function calling, ferramentas, contexto de sessão, HTTP e organização de código. Entregar uma solução funcional e clara. Não antecipar funcionalidades fora do escopo nem trocar o escopo sem consultar o usuário.
+
+Fluxo obrigatório:
+
+`Usuário → Interface → API Fastify → Agente LangChain → Tools → API mock (HTTP) → Agente → Resposta`
+
+A interface nunca fala direto com o provedor de LLM.
+
+## Stack obrigatória
+
+Não substituir estas escolhas sem justificativa técnica e autorização explícita.
+
+| Camada | Escolha | Restrição |
+|---|---|---|
+| HTTP | Fastify | Não trocar por Express, Hono ou outro framework. |
+| Linguagem | TypeScript em todo o backend | Tipagem forte. Evitar `any`. |
+| Validação runtime | Zod | A tipagem do TypeScript não substitui validação em runtime. |
+| LLM | Família Gemini Flash | Identificador do modelo só via `GEMINI_MODEL`. Confirmar o id na documentação atual antes de assumir que existe. |
+| Agente | LangChain.js | Usar `createAgent` para o ciclo modelo ↔ ferramentas. |
+
+- Inferir tipos TypeScript dos schemas Zod (`z.infer`) em vez de duplicar interfaces.
+- Definir tipos para entidades, parâmetros, respostas e contratos, e mantê-los consistentes entre camadas.
+- Nunca colocar API keys no código-fonte.
+- Não implementar um loop manual de function calling quando `createAgent` já cobre o requisito.
+- Consultar a documentação atual de LangChain.js, Gemini, Fastify e Zod via mcp context7. Não inventar métodos, parâmetros ou APIs.
+
+## Separação de responsabilidades
+
+**API mock** — fonte da verdade. Endpoints simulados, consulta de produtos e pedidos, criação de pedidos, estoque e regras de negócio dop cliente. Independente de LangChain, Gemini e de qualquer componente de IA.
+
+**Agente** — intenção, decisão de usar ferramentas, interpretação dos resultados, contexto da conversa e resposta natural.
+
+**Tools** — integração entre o agente e a API mock. Cada tool tem nome descritivo, descrição clara para o LLM, schema Zod de entrada, validação dos parâmetros, chamada HTTP, tratamento de erro e retorno estruturado.
+
+As tools consomem a API mock por `fetch`, usando `CLIENT_API_BASE_URL`. Deve ser criada uma classe responsável por fazer as chamadas HTTP ao endpoint da API mock. O objetivo é simular a integração real com o backend de um cliente.
+
+```typescript
+// Correto: a tool fala com a classe do Cliente
+const response = await cliente.getProducts(id);
+
+// Incorreto: a tool chama diretamente a API mock
+const product = fetch(`${CLIENT_API_BASE_URL}/products/${id}`);
+```
+
+Nunca confiar no LLM para validar uma compra. Existência do produto, quantidade e estoque são decididos pela API mock e o agente deve ser responsável por validar essas informações retornadas pela API mock.
+
+## Ferramentas iniciais
+
+| Tool | Função |
+|---|---|
+| `list_products` | Listar produtos para o agente apresentar de forma organizada. |
+| `get_product` | Detalhe de um produto pelo id. |
+| `get_order_status` | Status e detalhes de um pedido. |
+| `create_order` | Criar pedido. Body: `[{ productId, quantity }]`. |
+
+`create_order` só envia os dados necessários. A API verifica se os produtos existem, se as quantidades são válidas e se há estoque antes de confirmar.
+
+## Comportamento do agente
+
+O system prompt deve fixar estas regras:
+
+- Assistente virtual da loja: natural, educado e objetivo.
+- Usar ferramentas sempre que precisar de dados reais (produtos, preços, estoque, pedidos, status).
+- Não inventar produtos, preços, estoques, pedidos ou status.
+- Não afirmar que uma operação ocorreu sem confirmação válida da ferramenta.
+- Pedir o que faltar antes de executar a operação. Compra sem quantidade: perguntar a quantidade e só então chamar `create_order`.
+- Pedido só está concluído depois da confirmação da API.
+- Reaproveitar informações já dadas na mesma sessão quando ainda forem relevantes.
+- Não chamar ferramentas sem necessidade.
+- Comunicar erros de forma clara. Se a ferramenta falhar, não transformar a falha em sucesso nem completar com dados inventados.
+- Recusar pedidos fora do escopo da loja.
+
+## Sessões e memória
+
+O histórico da conversa fica em memória de processo, com `MemorySaver` do LangGraph como checkpointer do agente. Essa é a única forma de persistência de sessão permitida.
+
+- Toda conversa tem um `sessionId`. O histórico de uma sessão nunca vaza para outra.
+- Usar o `sessionId` como identificador da thread no `MemorySaver`, para que o histórico entre nas chamadas seguintes ao modelo.
+- Várias sessões devem funcionar ao mesmo tempo, cada uma isolada no mesmo `MemorySaver`.
+- Proibido usar banco relacional ou qualquer outra persistência para o histórico: Postgres, SQLite, MongoDB, Redis, arquivo, `PostgresSaver`, `SqliteSaver` ou equivalente.
+
+## Endpoints da aplicação
+
+`POST /chat` é o único canal da interface com o agente.
+
+```json
+{ "sessionId": "session-123", "message": "Quais produtos estão disponíveis?" }
+```
+
+O handler valida com Zod, recupera o histórico da sessão, executa o agente (que pode usar tools), espera a resposta final e a devolve ao cliente.
+
+API mock, também fonte da verdade para erros de negócio:
+
+| Método | Endpoint | Responsabilidade |
+|---|---|---|
+| GET | `/products` | Listar produtos |
+| GET | `/products/:id` | Consultar produto |
+| GET | `/orders/:id` | Consultar pedido |
+| POST | `/orders` | Criar pedido |
+
+Dados de produtos e pedidos são mockados. Tratar de forma explícita: produto inexistente, pedido inexistente, quantidade inválida, estoque insuficiente, requisição malformada e erro inesperado. Em caso de erros, a própria api mock retornará um erro apropriado e o agente deve ser responsável por tratar esse erro de forma adequada e informar ao usuário o erro ocorrido somente quando não é erro técnico e sim erro de negócio como produto inexistente, pedido inexistente, quantidade inválida, estoque insuficiente etc...
+
+## Interface
+
+Interface simples para demonstrar o agente. Deve permitir enviar mensagens, ver as mensagens do usuário e as respostas do agente, manter o `sessionId` durante a conversa, mostrar carregamento enquanto o agente processa e exibir erros de comunicação de forma compreensível. Sem funcionalidades extras e sem design elaborado. Consome somente `POST /chat`.
+
+## Erros, ambiente e segurança
+
+Não engolir erros. Diferenciar validação, regra de negócio e falha inesperada. Mensagens ao usuário são compreensíveis. Logs de depuração ficam no backend. Não expor API keys, stack traces ou detalhes internos.
+
+A aplicação deve continuar previsível se o modelo, uma tool ou a API mock falhar. Se algo não estiver implementado ou a operação falhar, dizer isso explicitamente.
+
+Configuração sensível ou dependente de ambiente vai para variáveis de ambiente. Validar o que for obrigatório na inicialização. Manter `.env.example` sem segredos. Nunca versionar `.env` com credenciais.
+
+Variáveis esperadas: `GOOGLE_API_KEY`, `GEMINI_MODEL`, `PORT`, `CLIENT_API_BASE_URL`.
+
+## Idioma do código
+
+Todo código escrito é em inglês, obrigatoriamente. Isso vale para nomes de arquivos, pastas, identificadores, tipos, logs e mensagens de erro voltadas ao desenvolvedor.
+Retorno das api's e comentários devem estar em português, somente o código fonte em inglês.
+
+```typescript
+// Correto
+const productId = "sku-1";
+
+// Incorreto
+const idProduto = "sku-1";
+```
+
+O texto que o usuário vê na conversa permanece no idioma dele. O system prompt e as respostas do agente continuam naturais para o cliente da loja.
+
+## Como implementar
+
+- Trabalhar em passos pequenos e verificar cada etapa antes de avançar.
+- Não implementar o que não foi pedido.
+- Preferir código legível e tipado. Evitar `any`, duplicação e abstração sem uso.
+- Preservar o que já funciona.
