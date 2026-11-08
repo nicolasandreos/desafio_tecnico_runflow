@@ -3,15 +3,16 @@ import type { ChatMessage } from "../session-store";
 
 type TranscriptProps = {
   messages: ChatMessage[];
+  pending: boolean;
 };
 
-export function Transcript({ messages }: TranscriptProps) {
+export function Transcript({ messages, pending }: TranscriptProps) {
   const endRef = useRef<HTMLDivElement>(null);
-  const isEmpty = messages.length === 0;
+  const isEmpty = messages.length === 0 && !pending;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages]);
+  }, [messages, pending]);
 
   return (
     <div
@@ -19,6 +20,7 @@ export function Transcript({ messages }: TranscriptProps) {
       role="log"
       aria-live="polite"
       aria-relevant="additions"
+      aria-busy={pending}
     >
       <div className="thread">
         {isEmpty ? (
@@ -35,6 +37,7 @@ export function Transcript({ messages }: TranscriptProps) {
             </article>
           ))
         )}
+        {pending ? <p className="pending">Aguardando resposta...</p> : null}
         <div ref={endRef} />
       </div>
     </div>

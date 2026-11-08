@@ -2,14 +2,15 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 
 type ComposerProps = {
+  disabled?: boolean;
   onSend: (message: string) => void;
 };
 
-export function Composer({ onSend }: ComposerProps) {
+export function Composer({ disabled = false, onSend }: ComposerProps) {
   const [draft, setDraft] = useState("");
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const fieldId = useId();
-  const canSend = draft.trim().length > 0;
+  const canSend = !disabled && draft.trim().length > 0;
 
   useEffect(() => {
     const field = fieldRef.current;
@@ -60,6 +61,7 @@ export function Composer({ onSend }: ComposerProps) {
           value={draft}
           placeholder="Envie uma mensagem"
           autoComplete="off"
+          disabled={disabled}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={handleKeyDown}
         />
@@ -67,7 +69,7 @@ export function Composer({ onSend }: ComposerProps) {
           type="submit"
           className="send"
           disabled={!canSend}
-          aria-label="Enviar mensagem"
+          aria-label={disabled ? "Aguardando resposta" : "Enviar mensagem"}
         >
           <SendIcon />
         </button>

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { ChatRequestError, sendChatMessage } from "./chat-api";
 import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import {
   activateConversation,
+  appendAssistantMessage,
   appendUserMessage,
   loadSessionStore,
   openDraft,
@@ -13,6 +15,9 @@ import {
 export function App() {
   const [store, setStore] = useState(loadSessionStore);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
+  const [failedSessionId, setFailedSessionId] = useState<string | null>(null);
+  const [communicationError, setCommunicationError] = useState<string | null>(null);
 
   useEffect(() => {
     saveSessionStore(store);
@@ -37,9 +42,42 @@ export function App() {
     store.conversations.find((conversation) => conversation.id === store.activeConversationId) ??
     null;
   const messages = active?.messages ?? [];
+  const isPending = active !== null && pendingSessionId === active.id;
+  const visibleError =
+    communicationError && failedSessionId === store.activeConversationId
+      ? communicationError
+      : null;
 
-  function handleSend(message: string) {
-    setStore((current) => appendUserMessage(current, message));
+  async function handleSend(message: string) {
+    if (pendingSessionId) {
+      return;
+    }
+
+    const next = appendUserMessage(store, message);
+    const sessionId = next.activeConversationId;
+    if (!sessionId) {
+      return;
+    }
+
+    setStore(next);
+    setPendingSessionId(sessionId);
+    setFailedSessionId(null);
+    setCommunicationError(null);
+
+    try {
+      const reply = await sendChatMessage(sessionId, message);
+      setStore((current) => appendAssistantMessage(current, sessionId, reply));
+    } catch (error) {
+      console.error("Failed to receive the agent reply.", error);
+      const text =
+        error instanceof ChatRequestError
+          ? error.message
+          : "Não foi possível processar a mensagem.";
+      setFailedSessionId(sessionId);
+      setCommunicationError(text);
+    } finally {
+      setPendingSessionId((current) => (current === sessionId ? null : current));
+    }
   }
 
   function handleSelect(id: string) {
@@ -84,8 +122,21 @@ export function App() {
           </button>
         </header>
 
-        <Transcript key={`transcript-${store.activeConversationId ?? "draft"}`} messages={messages} />
-        <Composer key={`composer-${store.activeConversationId ?? "draft"}`} onSend={handleSend} />
+        <Transcript
+          key={`transcript-${store.activeConversationId ?? "draft"}`}
+          messages={messages}
+          pending={isPending}
+        />
+        {visibleError ? (
+          <p className="chat-error" role="alert">
+            {visibleError}
+          </p>
+        ) : null}
+        <Composer
+          key={`composer-${store.activeConversationId ?? "draft"}`}
+          disabled={isPending || pendingSessionId !== null}
+          onSend={handleSend}
+        />
       </main>
     </div>
   );

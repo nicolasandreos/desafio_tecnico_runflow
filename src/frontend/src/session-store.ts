@@ -128,6 +128,39 @@ export function appendUserMessage(store: SessionStore, content: string): Session
   };
 }
 
+export function appendAssistantMessage(
+  store: SessionStore,
+  conversationId: string,
+  content: string,
+): SessionStore {
+  const message: ChatMessage = {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    content,
+  };
+  let found = false;
+  const conversations = store.conversations.map((conversation) => {
+    if (conversation.id !== conversationId) {
+      return conversation;
+    }
+
+    found = true;
+    return {
+      ...conversation,
+      messages: [...conversation.messages, message],
+    };
+  });
+
+  if (!found) {
+    return store;
+  }
+
+  return {
+    ...store,
+    conversations,
+  };
+}
+
 function titleFromMessage(content: string): string {
   const singleLine = content.replace(/\s+/g, " ").trim();
   return generateConversationTitle(singleLine);
